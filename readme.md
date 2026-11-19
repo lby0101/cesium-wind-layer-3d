@@ -21,6 +21,7 @@
 - GPU 粒子平流（Runge-Kutta 2），数百万粒子实时流动
 - 速度自适应线宽/线长，色带映射
 - 运行时动态替换数据、调参、显隐
+- 支持传入矩形/多边形范围，只显示范围内的粒子
 - 2D / 3D 场景模式均支持
 
 ## 安装
@@ -86,7 +87,48 @@ layer.zoomTo(2);
 | `useViewerBounds` | `false` | 在视口范围播种粒子 |
 | `domain` | `undefined` | 色带映射域 |
 | `displayRange` | `undefined` | 显示范围 |
+| `displayBounds` | `undefined` | **只显示该矩形范围内的粒子**（见下） |
+| `displayPolygon` | `undefined` | **只显示该多边形内的粒子**（见下） |
+| `displayMaskResolution` | `1024` | 多边形掩膜长边像素数 |
+| `displaySpawnTextureSize` | `256` | 「范围内随机点」纹理边长 |
 | `dynamic` | `true` | 是否动态更新 |
+
+## 只显示范围内的粒子
+
+`displayBounds`（矩形）和 `displayPolygon`（多边形）用来把粒子限制在指定范围内：
+范围内的粒子正常流动，流出范围的会被回收并重新播种回范围内，范围外的粒子不渲染。
+两者可以同时给，取交集。
+
+```js
+const layer = new WindLayer3D(viewer, windData, {
+  // 矩形：{west, south, east, north} | Cesium.Rectangle | [w, s, e, n]
+  displayBounds: { west: 118.2, south: 31.2, east: 120.2, north: 32.6 },
+});
+
+// 多边形：[[lon, lat], ...]（单环）、环数组（第一个是外环，其余是洞）、
+//        GeoJSON Polygon/MultiPolygon/Feature、Cesium.PolygonHierarchy 都支持
+layer.setDisplayRegion({
+  displayPolygon: [
+    [[117.9, 32.45], [118.9, 32.8], [119.75, 32.35], [119.6, 31.35], [118.6, 31.05]],
+  ],
+});
+
+layer.setDisplayRegion({ displayPolygon: null }); // 清除范围，恢复全数据范围
+```
+
+- 范围与数据范围求交，超出部分无效；两者无交集时只在 console 里告警。
+- 点坐标支持 `[lon, lat]`、`{lon, lat}` / `{lng, lat}`、`Cartographic`（弧度）、
+  `Cartesian3`（ECEF）。
+- 设置范围后 `zoomTo()` 飞到范围而不是整个数据范围。
+- 范围是**竖直棱柱**：粒子在范围内的经纬度上流动，高度不受限制。粒子有高度
+  （`levels` × `heightScale`），斜视角下这些粒子投影到屏幕上会略微越过范围的
+  平面轮廓，这是透视关系，不是裁剪失效。
+- 流线（线尾）同样按范围裁剪：线尾按屏幕长度延伸出去，其经纬度会按粒子自身
+  一步的方向外推后再判定，所以长线长不会把线尾甩到范围外。
+- 多边形内部播种用一张预生成的「范围内随机点」纹理，GPU 一次采样即可命中，
+  所以范围很小（例如省内一个区县）也不会出现粒子稀疏。
+- 范围变化会重建掩膜纹理并重新播种粒子；`displayMaskResolution` 调大可以让边界
+  更贴合，代价是初始化时多花几十毫秒。
 
 ## API
 
@@ -95,7 +137,8 @@ layer.zoomTo(2);
 | `show` | 读写属性，控制显隐 |
 | `updateWindData(data)` | 运行时替换风场数据 |
 | `updateOptions(options)` | 运行时更新参数 |
-| `zoomTo(duration?)` | 飞到数据范围 |
+| `setDisplayRegion({ displayBounds, displayPolygon })` | 运行时设置/清除显示范围 |
+| `zoomTo(duration?)` | 飞到显示范围（未设置范围时为数据范围） |
 | `destroy()` | 销毁全部资源 |
 | `isDestroyed()` | 是否已销毁 |
 

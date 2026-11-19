@@ -164,7 +164,8 @@ export class WindParticlesRendering {
   }
 
   createPrimitives() {
-    const windData = this.computing.windData;
+    // 注意：uniformMap 里不要在闭包外缓存 windData —— updateWindData 之后
+    // 数据范围/层高/速度区间都可能变，必须每帧从 computing 上读最新的
     const segments = new CustomPrimitive({
       commandType: "Draw",
       attributeLocations: {
@@ -181,15 +182,16 @@ export class WindParticlesRendering {
         frameRateAdjustment: () => this.computing.frameRateAdjustment,
         colorTable: () => this.colorTable,
         domain: () => new Cartesian2(
-          this.options.domain?.min ?? windData.speed.min,
-          this.options.domain?.max ?? windData.speed.max
+          this.options.domain?.min ?? this.computing.windData.speed.min,
+          this.options.domain?.max ?? this.computing.windData.speed.max
         ),
         displayRange: () => new Cartesian2(
-          this.options.displayRange?.min ?? windData.speed.min,
-          this.options.displayRange?.max ?? windData.speed.max
+          this.options.displayRange?.min ?? this.computing.windData.speed.min,
+          this.options.displayRange?.max ?? this.computing.windData.speed.max
         ),
-        minHeight: () => windData.levels[0],
-        maxHeight: () => windData.levels[windData.levels.length - 1],
+        minHeight: () => this.computing.windData.levels[0],
+        maxHeight: () =>
+          this.computing.windData.levels[this.computing.windData.levels.length - 1],
         heightScale: () => this.options.heightScale ?? 1,
         aspect: () => this.context.drawingBufferWidth / this.context.drawingBufferHeight,
         pixelSize: () => this.viewerParameters.pixelSize,
@@ -203,6 +205,19 @@ export class WindParticlesRendering {
         ),
         is3D: () => this.viewerParameters.sceneMode === SceneMode.SCENE3D,
         segmentsDepthTexture: () => this.textures.segmentsDepth,
+        // 显示范围（只显示范围内的粒子）
+        clipLonRange: () => this.computing.getClipLonRange(),
+        clipLatRange: () => this.computing.getClipLatRange(),
+        dataLonRange: () => new Cartesian2(
+          this.computing.windData.bounds.west,
+          this.computing.windData.bounds.east
+        ),
+        dataLatRange: () => new Cartesian2(
+          this.computing.windData.bounds.south,
+          this.computing.windData.bounds.north
+        ),
+        regionMask: () => this.computing.regionMaskTexture,
+        useRegionMask: () => this.computing.getUseRegionMask(),
       },
       vertexShaderSource: ShaderManager.getSegmentDrawVertexShader(),
       fragmentShaderSource: ShaderManager.getSegmentDrawFragmentShader(),

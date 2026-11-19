@@ -5,11 +5,18 @@ import { ClearCommand, Color, Pass } from "cesium";
 import { deepMerge } from "./utils";
 
 export class WindParticleSystem {
-  constructor(context, windData, options, viewerParameters, scene) {
+  constructor(context, windData, options, viewerParameters, scene, region) {
     this.context = context;
     this.options = options;
     this.viewerParameters = viewerParameters;
-    this.computing = new WindParticlesComputing(context, windData, options, viewerParameters, scene);
+    this.computing = new WindParticlesComputing(
+      context,
+      windData,
+      options,
+      viewerParameters,
+      scene,
+      region
+    );
     this.rendering = new WindParticlesRendering(context, options, viewerParameters, this.computing);
     this.clearFramebuffers();
   }
@@ -62,6 +69,15 @@ export class WindParticleSystem {
     this.viewerParameters = viewerParameters;
     this.computing.viewerParameters = viewerParameters;
     this.rendering.viewerParameters = viewerParameters;
+  }
+
+  // 显示范围（只显示范围内的粒子）
+  setRegion(region) {
+    this.computing.setRegion(region);
+  }
+
+  updateWindData(data, region) {
+    this.computing.updateWindData(data, region);
   }
 
   destroy() {

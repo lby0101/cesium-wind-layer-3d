@@ -13,13 +13,15 @@ import {
 import { ShaderManager } from "./shaderManager";
 import CustomPrimitive from "./customPrimitive";
 import { deepMerge } from "./utils";
+import { createRandomParticleData } from "./displayRegion";
 
 export class WindParticlesComputing {
-  constructor(context, windData, options, viewerParameters, scene) {
+  constructor(context, windData, options, viewerParameters, scene, region) {
     this.context = context;
     this.options = options;
     this.viewerParameters = viewerParameters;
     this.windData = windData;
+    this.region = region ?? null;
 
     // frameRate / frameRateAdjustment 必须在首帧前有有效值，
     // 否则 calculateSpeed 里 speed * undefined 会得到 NaN 位置，粒子全部不可见
@@ -33,6 +35,7 @@ export class WindParticlesComputing {
     });
     this.initFrameRate();
     this.createWindTexture();
+    this.createRegionTextures();
     this.createParticlesTextures();
     this.createComputingPrimitives();
   }
@@ -92,6 +95,87 @@ export class WindParticlesComputing {
     });
   }
 
+  // 显示范围用到的两张纹理：
+  //   regionMaskTexture       多边形掩膜（0/255），覆盖整个数据范围
+  //   regionSpawnTexture      范围内随机点 (lon, lat, 0, 1)，供重播种采样
+  // 没有多边形范围时用 1x1 占位纹理 —— 着色器里这两个 sampler 是静态引用的，
+  // 属于 active uniform，uniformMap 必须给出有效纹理。
+  createRegionTextures() {
+    const mask = this.region?.mask ?? null;
+    const spawn = this.region?.spawn ?? null;
+
+    this.regionMaskTexture = mask ? this.createMaskTexture(mask) : this.createDummyTexture([1, 1, 1, 1]);
+    this.regionSpawnTexture = spawn
+      ? this.createSpawnTexture(spawn)
+      : this.createDummyTexture([0, 0, 0, 1]);
+  }
+
+  createMaskTexture(mask) {
+    const { width, height, data } = mask;
+    const rgba = new Uint8Array(width * height * 4);
+    for (let i = 0; i < width * height; i++) {
+      const value = data[i];
+      rgba[i * 4 + 0] = value;
+      rgba[i * 4 + 1] = value;
+      rgba[i * 4 + 2] = value;
+      rgba[i * 4 + 3] = 255;
+    }
+
+    return new Texture({
+      context: this.context,
+      width,
+      height,
+      pixelFormat: PixelFormat.RGBA,
+      pixelDatatype: PixelDatatype.UNSIGNED_BYTE,
+      flipY: false,
+      sampler: new Sampler({
+        minificationFilter: TextureMinificationFilter.LINEAR,
+        magnificationFilter: TextureMagnificationFilter.LINEAR,
+        wrapS: TextureWrap.CLAMP_TO_EDGE,
+        wrapT: TextureWrap.CLAMP_TO_EDGE,
+      }),
+      source: { width, height, arrayBufferView: rgba },
+    });
+  }
+
+  createSpawnTexture(spawn) {
+    return new Texture({
+      context: this.context,
+      width: spawn.width,
+      height: spawn.height,
+      pixelFormat: PixelFormat.RGBA,
+      pixelDatatype: PixelDatatype.FLOAT,
+      flipY: false,
+      sampler: new Sampler({
+        minificationFilter: TextureMinificationFilter.NEAREST,
+        magnificationFilter: TextureMagnificationFilter.NEAREST,
+        wrapS: TextureWrap.CLAMP_TO_EDGE,
+        wrapT: TextureWrap.CLAMP_TO_EDGE,
+      }),
+      source: {
+        width: spawn.width,
+        height: spawn.height,
+        arrayBufferView: spawn.data,
+      },
+    });
+  }
+
+  createDummyTexture(rgba) {
+    return new Texture({
+      context: this.context,
+      width: 1,
+      height: 1,
+      pixelFormat: PixelFormat.RGBA,
+      pixelDatatype: PixelDatatype.FLOAT,
+      flipY: false,
+      sampler: new Sampler({
+        minificationFilter: TextureMinificationFilter.NEAREST,
+        magnificationFilter: TextureMagnificationFilter.NEAREST,
+      }),
+      source: { width: 1, height: 1, arrayBufferView: new Float32Array(rgba) },
+    });
+  }
+
   createParticlesTextures() {
     const size = this.options.particlesTextureSize;
     const total = size * size;
@@ -124,38 +208,51 @@ export class WindParticlesComputing {
   }
 
   createRandomParticlesData() {
-    const size = this.options.particlesTextureSize;
-    const { bounds } = this.windData;
-    const data = new Float32Array(size * size * 4);
-    const lonSpan = bounds.east - bounds.west;
-    const latSpan = bounds.north - bounds.south;
-
-    for (let i = 0; i < size * size; i++) {
-      data[i * 4 + 0] = bounds.west + Math.random() * lonSpan; // lon（度）
-      data[i * 4 + 1] = bounds.south + Math.random() * latSpan; // lat（度）
-      data[i * 4 + 2] = Math.random(); // zNorm ∈ [0,1]，映射最低..最高层
-      data[i * 4 + 3] = 1.0; // fresh 标记：首帧作单点渲染，随后转为流线
-    }
-    return data;
+    return createRandomParticleData(
+      this.options.particlesTextureSize,
+      this.windData.bounds,
+      this.region
+    );
   }
 
   destroyParticlesTextures() {
     Object.values(this.particlesTextures).forEach((texture) => texture.destroy());
   }
 
+  // 范围变化后重新播种：否则旧粒子要等 dropRate 慢慢淘汰，期间范围外/内密度都不对
+  resetParticles() {
+    this.destroyParticlesTextures();
+    this.createParticlesTextures();
+  }
+
+  // —— 显示范围在着色器里的入参 ——
+
+  getClipLonRange() {
+    const bounds = this.region?.bounds ?? this.windData.bounds;
+    return new Cartesian2(bounds.west, bounds.east);
+  }
+
+  getClipLatRange() {
+    const bounds = this.region?.bounds ?? this.windData.bounds;
+    return new Cartesian2(bounds.south, bounds.north);
+  }
+
+  getUseRegionMask() {
+    return Boolean(this.region?.mask);
+  }
+
   createComputingPrimitives() {
-    const windData = this.windData;
     this.primitives = {
       calculateSpeed: new CustomPrimitive({
         commandType: "Compute",
         uniformMap: {
           windTexture: () => this.windTexture,
           currentParticlesPosition: () => this.particlesTextures.currentParticlesPosition,
-          minimum: () => new Cartesian2(windData.bounds.west, windData.bounds.south),
-          maximum: () => new Cartesian2(windData.bounds.east, windData.bounds.north),
-          minHeight: () => windData.levels[0],
-          maxHeight: () => windData.levels[windData.levels.length - 1],
-          speedRange: () => new Cartesian2(windData.speed.min, windData.speed.max),
+          minimum: () => new Cartesian2(this.windData.bounds.west, this.windData.bounds.south),
+          maximum: () => new Cartesian2(this.windData.bounds.east, this.windData.bounds.north),
+          minHeight: () => this.windData.levels[0],
+          maxHeight: () => this.windData.levels[this.windData.levels.length - 1],
+          speedRange: () => new Cartesian2(this.windData.speed.min, this.windData.speed.max),
           speedScaleFactor: () => (this.viewerParameters.pixelSize + 50) * this.options.speedFactor,
           frameRateAdjustment: () => this.frameRateAdjustment,
         },
@@ -196,13 +293,18 @@ export class WindParticlesComputing {
           particlesSpeed: () => this.particlesTextures.particlesSpeed,
           lonRange: () => this.viewerParameters.lonRange,
           latRange: () => this.viewerParameters.latRange,
-          dataLonRange: () => new Cartesian2(windData.bounds.west, windData.bounds.east),
-          dataLatRange: () => new Cartesian2(windData.bounds.south, windData.bounds.north),
-          speedRange: () => new Cartesian2(windData.speed.min, windData.speed.max),
+          dataLonRange: () => new Cartesian2(this.windData.bounds.west, this.windData.bounds.east),
+          dataLatRange: () => new Cartesian2(this.windData.bounds.south, this.windData.bounds.north),
+          speedRange: () => new Cartesian2(this.windData.speed.min, this.windData.speed.max),
           randomCoefficient: () => Math.random(),
           dropRate: () => this.options.dropRate,
           dropRateBump: () => this.options.dropRateBump,
           useViewerBounds: () => this.options.useViewerBounds,
+          clipLonRange: () => this.getClipLonRange(),
+          clipLatRange: () => this.getClipLatRange(),
+          regionMask: () => this.regionMaskTexture,
+          regionSpawnTexture: () => this.regionSpawnTexture,
+          useRegionMask: () => this.getUseRegionMask(),
         },
         fragmentShaderSource: ShaderManager.getPostProcessingPositionShader(),
         outputTexture: this.particlesTextures.postProcessingPosition,
@@ -221,9 +323,28 @@ export class WindParticlesComputing {
     this.createWindTexture();
   }
 
-  updateWindData(data) {
+  reCreateRegionTextures() {
+    this.regionMaskTexture?.destroy();
+    this.regionSpawnTexture?.destroy();
+    this.createRegionTextures();
+  }
+
+  updateWindData(data, region) {
+    const regionChanged = region !== this.region;
     this.windData = data;
     this.reCreateWindTexture();
+    if (regionChanged) {
+      // 数据范围可能变了，掩膜与随机点纹理都要跟着重建，并重新播种
+      this.region = region ?? null;
+      this.reCreateRegionTextures();
+      this.resetParticles();
+    }
+  }
+
+  setRegion(region) {
+    this.region = region ?? null;
+    this.reCreateRegionTextures();
+    this.resetParticles();
   }
 
   updateOptions(options) {
@@ -236,6 +357,8 @@ export class WindParticlesComputing {
 
   destroy() {
     if (this.windTexture) this.windTexture.destroy();
+    this.regionMaskTexture?.destroy();
+    this.regionSpawnTexture?.destroy();
     Object.values(this.particlesTextures).forEach((texture) => texture.destroy());
     Object.values(this.primitives).forEach((primitive) => primitive.destroy());
     this.frameRateMonitor.destroy();

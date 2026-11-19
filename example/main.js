@@ -1,8 +1,8 @@
 /*
  * @Author: 码客GISer
  * @Date: 2026-08-18 15:56:31
- * @LastEditors: 码客GISer
- * @LastEditTime: 2026-08-19 16:53:03
+ * @LastEditors: libingya
+ * @LastEditTime: 2026-11-19 16:35:28
  * @Description: 
  */
 import * as Cesium from "cesium";
@@ -17,6 +17,12 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
   navigationHelpButton: false,
   animation: false,
   timeline: false,
+  baseLayer: new Cesium.ImageryLayer(
+    new Cesium.UrlTemplateImageryProvider({
+      // url: "/arcgisonline/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}.png",
+      url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}.png",
+    }),
+  ),
 });
 
 viewer.scene.globe.enableLighting = false;
@@ -35,10 +41,10 @@ const WIND_COLORS = [
 
 const options = {
   colors: WIND_COLORS,
-  particlesTextureSize: 256,
-  lineWidth: { min: .4, max: 1.3 },
-  lineLength: { min: 20, max: 200 },
-  heightScale: 10,
+  particlesTextureSize: 1256,
+  lineWidth: { min: .4, max: 2 },
+  lineLength: { min: 20, max: 1200 },
+  heightScale: 1,
   speedFactor: 0.3,
   dropRate: 0.003,
   dropRateBump: 0.001,
@@ -60,6 +66,29 @@ function normalizeWindData(raw) {
   };
 }
 
+// 显示范围示例：只显示范围内的粒子
+const DISPLAY_REGIONS = {
+  none: { displayBounds: null, displayPolygon: null },
+  rect: {
+    displayBounds: { west: 118.2, south: 31.2, east: 120.2, north: 32.6 },
+    displayPolygon: null,
+  },
+  polygon: {
+    // 逆时针外环即可，凹多边形/带洞也支持
+    displayPolygon: [
+      [
+        [117.9, 32.45],
+        [118.9, 32.8],
+        [119.75, 32.35],
+        [119.6, 31.35],
+        [118.6, 31.05],
+        [117.85, 31.7],
+      ],
+    ],
+    displayBounds: null,
+  },
+};
+
 let layer = null;
 
 function bindControls() {
@@ -73,10 +102,15 @@ function bindControls() {
     layer.updateOptions({ heightScale: Number(e.target.value) });
   });
   document.getElementById("length").addEventListener("input", (e) => {
-    layer.updateOptions({ lineLength: { min: 20, max: Number(e.target.value) } });
+    layer.updateOptions({ lineLength: { min: 2, max: Number(e.target.value) } });
   });
   document.getElementById("dynamic").addEventListener("change", (e) => {
     layer.updateOptions({ dynamic: e.target.checked });
+  });
+  document.getElementById("clip").addEventListener("change", (e) => {
+    // updateOptions 会重建掩膜纹理并重新播种粒子
+    layer.updateOptions(DISPLAY_REGIONS[e.target.value]);
+    layer.zoomTo(1.5);
   });
   document.getElementById("zoom").addEventListener("click", () => {
     layer.zoomTo(2);
@@ -86,7 +120,7 @@ function bindControls() {
 async function main() {
   const status = document.getElementById("status");
   try {
-    const response = await fetch("data/wind_3d.json");
+    const response = await fetch("data/wind_globe_3d.json");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const windData = normalizeWindData(await response.json());
 

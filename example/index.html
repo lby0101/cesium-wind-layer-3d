@@ -1,3 +1,10 @@
+<!--
+ * @Author: libingya
+ * @Date: 2026-08-18 17:01:12
+ * @LastEditors: libingya
+ * @LastEditTime: 2026-09-18 16:17:29
+ * @Description: 
+-->
 <!doctype html>
 <html lang="zh-CN">
   <head>
@@ -12,10 +19,18 @@
     <div id="panel">
       <h3>cesium-wind-layer-3d</h3>
       <label>粒子数 <input id="particles" type="range" min="64" max="512" step="64" value="256" /></label>
-      <label>速度 <input id="speed" type="range" min="0.1" max="5" step="0.1" value="1" /></label>
+      <label>速度 <input id="speed" type="range" min="0.01" max="5" step="0.1" value="1" /></label>
       <label>高度拉伸 <input id="height" type="range" min="1" max="50" step="1" value="10" /></label>
-      <label>最大线长 <input id="length" type="range" min="20" max="3000" step="20" value="400" /></label>
+      <label>最大线长 <input id="length" type="range" min="1" max="3000" step="2" value="400" /></label>
       <label>动画 <input id="dynamic" type="checkbox" checked /></label>
+      <label
+        >显示范围
+        <select id="clip">
+          <option value="none">全数据范围</option>
+          <option value="rect">矩形（太湖一带）</option>
+          <option value="polygon">多边形（南京一带）</option>
+        </select>
+      </label>
       <button id="zoom">飞到风场</button>
     </div>
     <script type="module" src="./main.js"></script>

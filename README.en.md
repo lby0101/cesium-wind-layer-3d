@@ -10,6 +10,7 @@ A WebGL2-based 3D wind field layer for CesiumJS, using 3D textures and GPU parti
 - GPU particle advection (Runge-Kutta 2) with millions of particles in real-time
 - Speed-adaptive line width/length with color ramp mapping
 - Runtime dynamic data replacement, parameter adjustment, and visibility control
+- Restrict particles to a rectangle or polygon region
 - Supports both 2D and 3D scene modes
 
 ## Installation
@@ -75,7 +76,45 @@ Array layout: `index = (z * ny + y) * nx + x`, x=longitude (west→east), y=lati
 | `useViewerBounds` | `false` | Seed particles in viewport bounds |
 | `domain` | `undefined` | Color ramp domain |
 | `displayRange` | `undefined` | Display range |
+| `displayBounds` | `undefined` | **Only show particles inside this rectangle** (see below) |
+| `displayPolygon` | `undefined` | **Only show particles inside this polygon** (see below) |
+| `displayMaskResolution` | `1024` | Long-side resolution of the polygon mask |
+| `displaySpawnTextureSize` | `256` | Side length of the "random points inside region" texture |
 | `dynamic` | `true` | Enable dynamic updates |
+
+## Limiting particles to a region
+
+`displayBounds` (rectangle) and `displayPolygon` (polygon) restrict particles to a region:
+particles inside advect normally, ones leaving the region are recycled and respawned inside,
+and particles outside the region are never rendered. Both can be given at once (intersection).
+
+```js
+const layer = new WindLayer3D(viewer, windData, {
+  // Rectangle: {west, south, east, north} | Cesium.Rectangle | [w, s, e, n]
+  displayBounds: { west: 118.2, south: 31.2, east: 120.2, north: 32.6 },
+});
+
+// Polygon: [[lon, lat], ...] (single ring), an array of rings (first is the outer
+// ring, the rest are holes), GeoJSON Polygon/MultiPolygon/Feature, or
+// Cesium.PolygonHierarchy
+layer.setDisplayRegion({
+  displayPolygon: [
+    [[117.9, 32.45], [118.9, 32.8], [119.75, 32.35], [119.6, 31.35], [118.6, 31.05]],
+  ],
+});
+
+layer.setDisplayRegion({ displayPolygon: null }); // clear, back to the full extent
+```
+
+- The region is intersected with the data extent; a warning is logged if they do not overlap.
+- Points accept `[lon, lat]`, `{lon, lat}` / `{lng, lat}`, `Cartographic` (radians) and
+  `Cartesian3` (ECEF).
+- With a region set, `zoomTo()` flies to the region instead of the whole data extent.
+- Reseeding inside a polygon samples a precomputed "random points inside region" texture,
+  so even a tiny region (a district inside a province) stays densely populated.
+- Changing the region rebuilds the mask texture and reseeds particles;
+  raising `displayMaskResolution` gives a tighter boundary at the cost of a few tens of
+  milliseconds during initialization.
 
 ## API
 
@@ -84,7 +123,8 @@ Array layout: `index = (z * ny + y) * nx + x`, x=longitude (west→east), y=lati
 | `show` | Read/write property for visibility control |
 | `updateWindData(data)` | Replace wind data at runtime |
 | `updateOptions(options)` | Update options at runtime |
-| `zoomTo(duration?)` | Fly to data extent |
+| `setDisplayRegion({ displayBounds, displayPolygon })` | Set/clear the display region at runtime |
+| `zoomTo(duration?)` | Fly to the display region (data extent when unset) |
 | `destroy()` | Destroy all resources |
 | `isDestroyed()` | Check if destroyed |
 

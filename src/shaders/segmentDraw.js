@@ -23,6 +23,9 @@ uniform bool is3D;
 out vec4 speed;
 out float v_segmentPosition;
 out vec2 textureCoordinate;
+// 线段上的经纬度（两端分别取起点/终点，插值后即片元在线段上的位置），
+// 片元着色器用它做显示范围裁剪
+out vec3 v_lonLatZ;
 
 struct adjacentPoints {
   vec4 previous;
@@ -110,12 +113,28 @@ void main() {
 
   float lengthFactor = mix(lineLength.x, lineLength.y, normalizedSpeed) * pixelSize;
 
+  // 线段两端的经纬度，供片元着色器做显示范围裁剪。
+  // 线尾是按屏幕长度延伸出去的（见下面 extendedPosition），所以经纬度要按粒子
+  // 自身一步的方向外推同样的倍数，否则伸到范围外的那一截会被漏掉。
+  // 刚重播种的粒子只画一个点，两端取同一点，避免插值跨到旧位置。
+  vec3 segmentStartLonLatZ = previousPosition;
+  vec3 segmentEndLonLatZ = previousPosition;
+  if (isAnyRandomPointUsed <= 0.0) {
+    vec2 currentNdc = projectedCoordinates.current.xy / projectedCoordinates.current.w;
+    vec2 nextNdc = projectedCoordinates.next.xy / projectedCoordinates.next.w;
+    float stepScreen = length((nextNdc - currentNdc) * vec2(aspect, 1.0));
+    float extendScreen = lengthFactor / max(projectedCoordinates.current.w, 1.0);
+    float extendRatio = stepScreen > 1e-6 ? clamp(extendScreen / stepScreen, 0.0, 512.0) : 0.0;
+    segmentEndLonLatZ = currentPosition + (nextPosition - currentPosition) * extendRatio;
+  }
+
   if (pointToUse == 1) {
     offset = calculateOffsetOnNormalDirection(
       projectedCoordinates.previous, projectedCoordinates.current, offsetSign, widthFactor);
     // NDC 偏移 × w 转回裁剪空间，抵消透视除法，得到与缩放无关的像素线宽
     gl_Position = projectedCoordinates.previous + projectedCoordinates.previous.w * offset;
     v_segmentPosition = 0.0;
+    v_lonLatZ = segmentStartLonLatZ;
   } else if (pointToUse == -1) {
     vec4 direction = normalize(projectedCoordinates.next - projectedCoordinates.current);
     vec4 extendedPosition = projectedCoordinates.current + direction * lengthFactor;
@@ -123,6 +142,7 @@ void main() {
       projectedCoordinates.current, extendedPosition, offsetSign, widthFactor);
     gl_Position = extendedPosition + extendedPosition.w * offset;
     v_segmentPosition = 1.0;
+    v_lonLatZ = segmentEndLonLatZ;
   }
 
   textureCoordinate = st;
@@ -135,16 +155,51 @@ precision highp float;
 in vec4 speed;
 in float v_segmentPosition;
 in vec2 textureCoordinate;
+in vec3 v_lonLatZ;
 
 uniform vec2 domain;
 uniform vec2 displayRange;
 uniform sampler2D colorTable;
 uniform sampler2D segmentsDepthTexture;
 
+// —— 显示范围（只显示范围内的粒子）——
+// 未设置范围时 clipLonRange/clipLatRange 等于数据范围，判定恒为 true。
+uniform vec2 clipLonRange; // (west, east)
+uniform vec2 clipLatRange; // (south, north)
+uniform vec2 dataLonRange; // (west, east)
+uniform vec2 dataLatRange; // (south, north)
+uniform sampler2D regionMask; // 多边形掩膜，覆盖整个数据范围，行序 南→北
+uniform bool useRegionMask;
+
 out vec4 fragColor;
+
+// 掩膜纹理坐标：与风场 3D 纹理一致，把经纬度映射到数据范围上的 [0,1]
+vec2 maskCoordinates(vec2 lonLat) {
+  return vec2(
+    (lonLat.x - dataLonRange.x) / (dataLonRange.y - dataLonRange.x),
+    (lonLat.y - dataLatRange.x) / (dataLatRange.y - dataLatRange.x)
+  );
+}
+
+bool insideRegion(vec2 lonLat) {
+  if (lonLat.x < clipLonRange.x || lonLat.x > clipLonRange.y ||
+      lonLat.y < clipLatRange.x || lonLat.y > clipLatRange.y) {
+    return false;
+  }
+  if (useRegionMask) {
+    vec2 uv = maskCoordinates(lonLat);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+      return false;
+    }
+    return texture(regionMask, uv).r > 0.5;
+  }
+  return true;
+}
 
 void main() {
   const float zero = 0.0;
+  fragColor = vec4(zero);
+
   if (speed.a > zero && speed.a > displayRange.x && speed.a < displayRange.y) {
     float magnitude = clamp(speed.a, domain.x, domain.y);
     float normalizedSpeed = (magnitude - domain.x) / (domain.y - domain.x);
@@ -154,13 +209,17 @@ void main() {
     alpha = pow(alpha, 1.5);
     float speedAlpha = mix(0.3, 1.0, normalizedSpeed);
     fragColor = vec4(baseColor.rgb, baseColor.a * alpha * speedAlpha);
-  } else {
-    fragColor = vec4(zero);
   }
 
   float segmentsDepth = texture(segmentsDepthTexture, textureCoordinate).r;
   float globeDepth = czm_unpackDepth(texture(czm_globeDepthTexture, textureCoordinate));
   if (segmentsDepth < globeDepth) {
+    fragColor = vec4(zero);
+  }
+
+  // 只显示范围内的粒子。线段跨越范围边界时，v_lonLatZ 逐片元插值，
+  // 于是线段会在边界处被切断，而不是整条消失。
+  if (!insideRegion(v_lonLatZ.xy)) {
     fragColor = vec4(zero);
   }
 }

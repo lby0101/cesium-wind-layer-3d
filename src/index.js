@@ -1,6 +1,8 @@
-import { Cartesian2, SceneMode, Math as CesiumMath, Rectangle } from "cesium";
+import { Cartesian2, Rectangle } from "cesium";
 import { WindParticleSystem } from "./windParticleSystem";
 import { deepMerge, computeSpeedFromComponents } from "./utils";
+import { createDisplayRegion } from "./displayRegion";
+import { computeViewportParameters } from "./viewportParameters";
 
 export const DefaultOptions = {
   particlesTextureSize: 128,
@@ -16,7 +18,20 @@ export const DefaultOptions = {
   domain: undefined,
   displayRange: undefined,
   dynamic: true,
+  // 显示范围：只显示范围内的粒子，两者可同时给（取交集），缺省不裁剪
+  displayBounds: undefined,
+  displayPolygon: undefined,
+  displayMaskResolution: undefined,
+  displaySpawnTextureSize: undefined,
 };
+
+// 这些选项变化会改变「显示范围」，需要重建掩膜纹理并重新播种粒子
+const REGION_OPTION_KEYS = [
+  "displayBounds",
+  "displayPolygon",
+  "displayMaskResolution",
+  "displaySpawnTextureSize",
+];
 
 export class WindLayer3D {
   constructor(viewer, windData, options) {
@@ -25,6 +40,7 @@ export class WindLayer3D {
     this.scene = viewer.scene;
     this.options = { ...DefaultOptions, ...options };
     this.windData = this.processWindData(windData);
+    this.region = createDisplayRegion(this.windData, this.options);
 
     this.viewerParameters = {
       lonRange: new Cartesian2(-180, 180),
@@ -39,7 +55,8 @@ export class WindLayer3D {
       this.windData,
       this.options,
       this.viewerParameters,
-      this.scene
+      this.scene,
+      this.region
     );
     this.add();
 
@@ -86,65 +103,23 @@ export class WindLayer3D {
   updateViewerParameters() {
     const scene = this.viewer.scene;
     const canvas = scene.canvas;
-    const corners = [
-      { x: 0, y: 0 },
-      { x: 0, y: canvas.clientHeight },
-      { x: canvas.clientWidth, y: 0 },
-      { x: canvas.clientWidth, y: canvas.clientHeight },
-    ];
 
-    let minLon = 180;
-    let maxLon = -180;
-    let minLat = 90;
-    let maxLat = -90;
-    let isOutsideGlobe = false;
+    // 角点射线打空（看到天空）时用该方位的地平线切点代替，
+    // 保证 pixelSize 随缩放连续变化，不会冻结在旧值上
+    const parameters = computeViewportParameters({
+      camera: scene.camera,
+      ellipsoid: scene.globe.ellipsoid,
+      canvasWidth: canvas.clientWidth,
+      canvasHeight: canvas.clientHeight,
+      sceneMode: scene.mode,
+      bounds: this.windData.bounds,
+    });
 
-    for (const corner of corners) {
-      const cartesian = scene.camera.pickEllipsoid(
-        new Cartesian2(corner.x, corner.y),
-        scene.globe.ellipsoid
-      );
-      if (!cartesian) {
-        isOutsideGlobe = true;
-        break;
-      }
-      const cartographic = scene.globe.ellipsoid.cartesianToCartographic(cartesian);
-      const lon = CesiumMath.toDegrees(cartographic.longitude);
-      const lat = CesiumMath.toDegrees(cartographic.latitude);
-      minLon = Math.min(minLon, lon);
-      maxLon = Math.max(maxLon, lon);
-      minLat = Math.min(minLat, lat);
-      maxLat = Math.max(maxLat, lat);
-    }
-
-    if (!isOutsideGlobe) {
-      const lonRange = new Cartesian2(
-        Math.max(this.windData.bounds.west, minLon),
-        Math.min(this.windData.bounds.east, maxLon)
-      );
-      const latRange = new Cartesian2(
-        Math.max(this.windData.bounds.south, minLat),
-        Math.min(this.windData.bounds.north, maxLat)
-      );
-
-      const lonBuffer = (lonRange.y - lonRange.x) * 0.05;
-      const latBuffer = (latRange.y - latRange.x) * 0.05;
-      lonRange.x = Math.max(this.windData.bounds.west, lonRange.x - lonBuffer);
-      lonRange.y = Math.min(this.windData.bounds.east, lonRange.y + lonBuffer);
-      latRange.x = Math.max(this.windData.bounds.south, latRange.x - latBuffer);
-      latRange.y = Math.min(this.windData.bounds.north, latRange.y + latBuffer);
-
-      this.viewerParameters.lonRange = lonRange;
-      this.viewerParameters.latRange = latRange;
-
-      const dataLonRange = this.windData.bounds.east - this.windData.bounds.west;
-      const dataLatRange = this.windData.bounds.north - this.windData.bounds.south;
-      const visibleRatioLon = (lonRange.y - lonRange.x) / dataLonRange;
-      const visibleRatioLat = (latRange.y - latRange.x) / dataLatRange;
-      const visibleRatio = Math.min(visibleRatioLon, visibleRatioLat);
-      const pixelSize = 1000 * visibleRatio;
-      if (pixelSize > 0) {
-        this.viewerParameters.pixelSize = Math.max(0, Math.min(1000, pixelSize));
+    if (parameters) {
+      this.viewerParameters.lonRange = parameters.lonRange;
+      this.viewerParameters.latRange = parameters.latRange;
+      if (parameters.pixelSize > 0) {
+        this.viewerParameters.pixelSize = parameters.pixelSize;
       }
     }
 
@@ -155,24 +130,45 @@ export class WindLayer3D {
   updateWindData(data) {
     if (this._isDestroyed) return;
     this.windData = this.processWindData(data);
-    this.particleSystem.computing.updateWindData(this.windData);
+    // 数据范围可能变了，显示范围要跟着重算（掩膜覆盖的是数据范围）
+    this.region = createDisplayRegion(this.windData, this.options);
+    this.particleSystem.updateWindData(this.windData, this.region);
     this.viewer.scene.requestRender();
   }
 
   updateOptions(options) {
     if (this._isDestroyed) return;
+    const regionChanged = REGION_OPTION_KEYS.some((key) => key in options);
     this.options = deepMerge(options, this.options);
     this.particleSystem.changeOptions(options);
+    if (regionChanged) {
+      this.region = createDisplayRegion(this.windData, this.options);
+      this.particleSystem.setRegion(this.region);
+    }
     this.viewer.scene.requestRender();
   }
 
+  /**
+   * 设置/清除显示范围（只显示范围内的粒子）。
+   * @param {{displayBounds?: *, displayPolygon?: *}} region
+   *   displayBounds  —— 矩形，{west,south,east,north} | Cesium.Rectangle | [w,s,e,n]
+   *   displayPolygon —— 多边形，[[lon,lat],...] | [[[lon,lat],...],...] |
+   *                     GeoJSON Polygon/MultiPolygon/Feature | Cesium.PolygonHierarchy
+   *   传 null / undefined 表示清除对应范围。
+   */
+  setDisplayRegion({ displayBounds, displayPolygon } = {}) {
+    this.updateOptions({ displayBounds, displayPolygon });
+  }
+
   zoomTo(duration = 0) {
-    if (this.windData.bounds) {
+    // 设置了显示范围时，飞到范围而不是整个数据范围
+    const bounds = this.region?.bounds ?? this.windData.bounds;
+    if (bounds) {
       const rectangle = Rectangle.fromDegrees(
-        this.windData.bounds.west,
-        this.windData.bounds.south,
-        this.windData.bounds.east,
-        this.windData.bounds.north
+        bounds.west,
+        bounds.south,
+        bounds.east,
+        bounds.north
       );
       this.viewer.camera.flyTo({ destination: rectangle, duration });
     }
