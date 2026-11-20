@@ -74,7 +74,7 @@ Array layout: `index = (z * ny + y) * nx + x`, x=longitude (west→east), y=lati
 | `colors` | `["white"]` | Color ramp (CSS color array) |
 | `flipY` | `false` | Flip Y axis |
 | `useViewerBounds` | `false` | Seed particles in viewport bounds |
-| `domain` | `undefined` | Color ramp domain |
+| `domain` | `undefined` | Normalization domain for color ramp / line length / alpha; defaults to the data speed `[min, p95]` |
 | `displayRange` | `undefined` | Display range |
 | `displayBounds` | `undefined` | **Only show particles inside this rectangle** (see below) |
 | `displayPolygon` | `undefined` | **Only show particles inside this polygon** (see below) |

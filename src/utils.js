@@ -43,3 +43,13 @@ export function computeSpeedFromComponents(u, v, w) {
   }
   return { array, min, max };
 }
+
+// 速度分布的高分位值（默认 p95），用作默认归一化域的上界。
+// 直接用全局 max 做上界时，个别极端值（如急流）会把整个色带/线长映射
+// 压到区间低端，低风速区域线长接近 0、几乎不可见，表现为“区域缺失”。
+export function computeSpeedPercentile(array, p = 0.95) {
+  if (!array || array.length === 0) return 0;
+  const sorted = Float32Array.from(array).sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))));
+  return sorted[index];
+}

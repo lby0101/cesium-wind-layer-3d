@@ -2,7 +2,7 @@
  * @Author: 码客GISer
  * @Date: 2026-08-18 15:56:31
  * @LastEditors: libingya
- * @LastEditTime: 2026-11-19 16:35:28
+ * @LastEditTime: 2026-11-20 09:12:21
  * @Description: 
  */
 import * as Cesium from "cesium";
@@ -41,8 +41,8 @@ const WIND_COLORS = [
 
 const options = {
   colors: WIND_COLORS,
-  particlesTextureSize: 1256,
-  lineWidth: { min: .4, max: 2 },
+  particlesTextureSize: 256,
+  lineWidth: { min: .4, max: 1 },
   lineLength: { min: 20, max: 1200 },
   heightScale: 1,
   speedFactor: 0.3,

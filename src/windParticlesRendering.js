@@ -183,7 +183,10 @@ export class WindParticlesRendering {
         colorTable: () => this.colorTable,
         domain: () => new Cartesian2(
           this.options.domain?.min ?? this.computing.windData.speed.min,
-          this.options.domain?.max ?? this.computing.windData.speed.max
+          this.options.domain?.max ??
+            (this.computing.windData.speed.p95 > this.computing.windData.speed.min
+              ? this.computing.windData.speed.p95
+              : this.computing.windData.speed.max)
         ),
         displayRange: () => new Cartesian2(
           this.options.displayRange?.min ?? this.computing.windData.speed.min,

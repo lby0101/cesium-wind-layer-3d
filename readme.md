@@ -85,7 +85,7 @@ layer.zoomTo(2);
 | `colors` | `["white"]` | 色带 CSS 颜色数组 |
 | `flipY` | `false` | 翻转 Y 轴 |
 | `useViewerBounds` | `false` | 在视口范围播种粒子 |
-| `domain` | `undefined` | 色带映射域 |
+| `domain` | `undefined` | 色带/线长/透明度的归一化域，缺省用数据速度的 `[min, p95]` |
 | `displayRange` | `undefined` | 显示范围 |
 | `displayBounds` | `undefined` | **只显示该矩形范围内的粒子**（见下） |
 | `displayPolygon` | `undefined` | **只显示该多边形内的粒子**（见下） |

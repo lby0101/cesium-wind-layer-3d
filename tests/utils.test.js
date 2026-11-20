@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deepMerge, computeSpeedFromComponents } from "../src/utils.js";
+import { deepMerge, computeSpeedFromComponents, computeSpeedPercentile } from "../src/utils.js";
 
 describe("deepMerge", () => {
   it("返回目标对象拷贝且不污染源", () => {
@@ -60,5 +60,30 @@ describe("computeSpeedFromComponents", () => {
     expect(array[0]).toBe(0);
     expect(min).toBe(Number.MAX_VALUE);
     expect(max).toBe(Number.MIN_VALUE);
+  });
+});
+
+describe("computeSpeedPercentile", () => {
+  it("空数组返回 0", () => {
+    expect(computeSpeedPercentile(new Float32Array(0))).toBe(0);
+  });
+
+  it("按排序后的位置取分位数", () => {
+    const values = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    // p95 索引 = floor(0.95 * 9) = 8 -> 第 9 个值 9
+    expect(computeSpeedPercentile(values, 0.95)).toBe(9);
+    expect(computeSpeedPercentile(values, 0.5)).toBe(5);
+  });
+
+  it("存在极端离群值时 p95 远小于 max（归一化域不会被压扁）", () => {
+    // 95 个低风速值 + 1 个 78 m/s 的急流离群值
+    const values = new Float32Array([2, 3, 4, 5, 6, 7, 8, 9, 10, 78]);
+    const { min, max } = (() => {
+      let mn = Infinity, mx = -Infinity;
+      for (const v of values) { if (v < mn) mn = v; if (v > mx) mx = v; }
+      return { min: mn, max: mx };
+    })();
+    expect(computeSpeedPercentile(values, 0.95)).toBeLessThan(max);
+    expect(computeSpeedPercentile(values, 0.95)).toBeGreaterThan(min);
   });
 });

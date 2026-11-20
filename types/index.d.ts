@@ -59,6 +59,7 @@ export interface WindLayerOptions {
   colors: string[];
   flipY: boolean;
   useViewerBounds: boolean;
+  /** 色带/线长/透明度的归一化域，缺省为数据速度的 [min, p95] */
   domain?: NumberRange;
   displayRange?: NumberRange;
   dynamic: boolean;

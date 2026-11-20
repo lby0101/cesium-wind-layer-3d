@@ -1,6 +1,6 @@
 import { Cartesian2, Rectangle } from "cesium";
 import { WindParticleSystem } from "./windParticleSystem";
-import { deepMerge, computeSpeedFromComponents } from "./utils";
+import { deepMerge, computeSpeedFromComponents, computeSpeedPercentile } from "./utils";
 import { createDisplayRegion } from "./displayRegion";
 import { computeViewportParameters } from "./viewportParameters";
 
@@ -97,7 +97,13 @@ export class WindLayer3D {
       );
       windData = { ...windData, speed: { array, min, max } };
     }
-    return windData;
+
+    // 默认归一化域上界用高分位数，避免极端值把映射压扁
+    const speed = {
+      ...windData.speed,
+      p95: computeSpeedPercentile(windData.speed.array, 0.95),
+    };
+    return { ...windData, speed };
   }
 
   updateViewerParameters() {
